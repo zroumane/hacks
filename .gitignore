@@ -1,0 +1,27 @@
+# Environment files
+.env
+*.env
+.env.*
+
+# Underscore-prefixed folders
+_*/
+
+# Python virtual environments
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Output artifacts
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+CLAUDE.md
