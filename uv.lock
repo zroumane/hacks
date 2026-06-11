@@ -537,6 +537,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "docling" },
     { name = "ibm-watsonx-ai" },
+    { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "streamlit" },
 ]
@@ -545,6 +546,7 @@ dependencies = [
 requires-dist = [
     { name = "docling", specifier = ">=2.101.0" },
     { name = "ibm-watsonx-ai", specifier = ">=1.5.13" },
+    { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "streamlit", specifier = ">=1.58.0" },
 ]

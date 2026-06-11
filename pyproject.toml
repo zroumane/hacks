@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "docling>=2.101.0",
     "ibm-watsonx-ai>=1.5.13",
+    "python-dateutil>=2.9.0.post0",
     "python-dotenv>=1.2.2",
     "streamlit>=1.58.0",
 ]
