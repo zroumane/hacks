@@ -8,6 +8,7 @@ dependencies = [
     "ibm-watsonx-ai>=1.5.13",
     "numpy>=2.4.6",
     "pandas>=2.3.3",
+    "python-dateutil>=2.9.0.post0",
     "python-dotenv>=1.2.2",
     "scikit-learn>=1.9.0",
     "streamlit>=1.58.0",
