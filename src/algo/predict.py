@@ -4,7 +4,7 @@ Génération de la soumission Kaggle à partir d'un modèle entraîné.
 Ce script :
   1. Charge le modèle .pkl passé en argument
   2. Prépare les features du jeu de test (environment_test.csv)
-  3. Génère les prédictions pour les 164 combinaisons de sample_submission.csv
+  3. Génère les prédictions pour toute les combinaisons de aircraft id et year_month
   4. Sauvegarde le fichier de soumission dans output/
 
 Usage : uv run src/algo/predict.py <model.pkl>
@@ -73,22 +73,12 @@ model = load_model(model_path.stem)
 
 print("Chargement des données de test...")
 env_test = load_input("environment_test.csv")  # 14 303 lignes, 142 avions
-sub      = load_input("sample_submission.csv")  # 164 combinaisons à prédire
 
 # ── 2. Feature âge avion ───────────────────────────────────────────────────────
-# La date de livraison n'est pas connue pour les avions de test.
-# On l'estime comme le premier mois présent dans environment_test pour cet avion.
-# C'est une approximation : l'avion existait peut-être avant, mais c'est la
-# donnée la plus précoce disponible.
-first_month = env_test.groupby("aircraft_id")["year_month"].min().reset_index()
-first_month.columns = ["aircraft_id", "estimated_delivery"]
-first_month["delivery_year"]  = pd.to_datetime(first_month["estimated_delivery"]).dt.year
-first_month["delivery_month"] = pd.to_datetime(first_month["estimated_delivery"]).dt.month
-
-env_test = env_test.merge(
-    first_month[["aircraft_id", "delivery_year", "delivery_month"]],
-    on="aircraft_id",
-)
+# Les avions de test ont tous été livrés en 2014 (juin par défaut).
+# Leur date de livraison n'est pas dans les données → on applique cette constante.
+env_test["delivery_year"]  = 2014
+env_test["delivery_month"] = 6
 env_test = add_age_feature(env_test, env_test["delivery_year"], env_test["delivery_month"])
 
 # ── 3. Prédictions ─────────────────────────────────────────────────────────────
@@ -100,23 +90,15 @@ X_test = env_test[FEATURE_COLS].fillna(0)
 env_test["corrosion_risk"] = np.clip(model.predict(X_test), 0, 1)
 
 # ── 4. Construction de la soumission ──────────────────────────────────────────
-# Le format attendu par Kaggle est : id = "<aircraft_id>_<year_month>"
+# La soumission contient tous les couples aircraft_id × year_month de environment_test
+# soit 14 303 lignes. Le format de l'id est "<aircraft_id>_<year_month>".
 env_test["id"] = env_test["aircraft_id"] + "_" + env_test["year_month"]
-preds = env_test[["id", "corrosion_risk"]].set_index("id")
+submission = env_test[["id", "corrosion_risk"]].reset_index(drop=True)
 
-submission = sub.copy()
-submission["corrosion_risk"] = submission["id"].map(preds["corrosion_risk"])
-
-# Certains id de la soumission peuvent ne pas avoir de correspondance dans
-# environment_test → on remplit avec 0.5 (valeur neutre, Brier Score = 0.25)
-missing = submission["corrosion_risk"].isna().sum()
-if missing:
-    print(f"  {missing} id sans correspondance dans env_test → rempli à 0.5")
-    submission["corrosion_risk"] = submission["corrosion_risk"].fillna(0.5)
+print(f"  {len(submission)} lignes dans la soumission")
 
 # ── 5. Sauvegarde ─────────────────────────────────────────────────────────────
 output_path = save_output(submission, "submission.csv")
 
 print(f"\nSoumission sauvegardée : {output_path}")
-print(f"Distribution des prédictions :")
 print(submission["corrosion_risk"].describe().round(4).to_string())
