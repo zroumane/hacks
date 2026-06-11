@@ -118,10 +118,15 @@ mindmap
 
 **Script** : `03_target_engineering.py`
 
+La target est **binaire** par C-CHECK :
+
 ```python
-# Pour chaque ligne de environment_training.csv, joindre avec corrosions_training.csv
-corrosion_risk = 1 / (months_until_corrosion + 1)
-# Avions sans observation → risk = 0.0
+# Jointure environment_training + corrosions_training sur aircraft_id + date C-CHECK
+# Y_i = 1 si corrosion observée à ce C-CHECK, 0 sinon
+corrosion_observed = environment_df.merge(corrosions_df, on=['aircraft_id', 'ccheck_date'], how='left')
+corrosion_observed['Y'] = corrosion_observed['observation_date'].notna().astype(int)
+
+# Le modèle prédit P_i = probabilité que Y_i = 1
 ```
 
 ## Phase 3 : Feature Engineering
@@ -131,6 +136,7 @@ corrosion_risk = 1 / (months_until_corrosion + 1)
 ```python
 # Base
 aircraft_age_months = (year_month - delivery_date).months
+ground_to_flight_ratio = total_parking_minutes / (total_flight_minutes + 1)  # feature clé
 total_sea_salt = sum(sea_salt_aerosol_*)
 month_sin = sin(2 * pi * month / 12)
 
@@ -179,19 +185,21 @@ flowchart TD
 
 ```python
 import xgboost as xgb
-model_xgb = xgb.XGBRegressor(
+model_xgb = xgb.XGBClassifier(
     n_estimators=1000, learning_rate=0.01, max_depth=6,
-    subsample=0.8, colsample_bytree=0.8, objective='reg:squarederror'
+    subsample=0.8, colsample_bytree=0.8, objective='binary:logistic',
+    eval_metric='logloss'  # optimise la calibration des probabilités
 )
 
 import lightgbm as lgb
-model_lgb = lgb.LGBMRegressor(
+model_lgb = lgb.LGBMClassifier(
     n_estimators=1000, learning_rate=0.01, num_leaves=31,
-    feature_fraction=0.8, bagging_fraction=0.8, objective='regression'
+    feature_fraction=0.8, bagging_fraction=0.8, objective='binary'
 )
 
-from sklearn.ensemble import RandomForestRegressor
-model_rf = RandomForestRegressor(n_estimators=500, max_depth=15, n_jobs=-1)
+from sklearn.ensemble import RandomForestClassifier
+model_rf = RandomForestClassifier(n_estimators=500, max_depth=15, n_jobs=-1)
+# Utiliser predict_proba()[:,1] pour obtenir P_i
 ```
 
 ### Granite TimeSeries
@@ -250,7 +258,8 @@ selector.fit(X_train, y_train)
 **Scripts** : `15_generate_predictions.py`, `16_create_submission.py`
 
 ```python
-predictions = np.clip(best_model.predict(X_test), 0, 1)
+predictions = best_model.predict_proba(X_test)[:, 1]  # probabilités P_i ∈ [0, 1]
+predictions = np.clip(predictions, 0, 1)
 
 submission = pd.DataFrame({
     'id': test_ids,
@@ -299,14 +308,20 @@ uv run src/algo/16_create_submission.py
 uv run streamlit run src/streamlit/dashboard.py
 ```
 
-## Métriques de Performance
+## Métrique de Performance
 
-| Métrique | Objectif |
-|----------|----------|
-| RMSE | < 0.15 |
-| MAE | < 0.10 |
-| R² | > 0.70 |
-| Kaggle Score | Top 20% |
+**Brier Score** (métrique officielle, évalué sur 20% d'avions hold-out) :
+
+```
+BS = (1/N) × Σ (P_i − Y_i)²   où Y_i ∈ {0, 1}
+```
+
+| Score | Interprétation |
+|-------|----------------|
+| 0.0 | Parfait |
+| < 0.10 | Objectif cible |
+| 0.25 | Équivalent à prédire toujours 0.5 |
+| 1.0 | Pire cas |
 
 ## Risques et Mitigations
 
