@@ -83,14 +83,25 @@ def train_catboost(
 
 # ── TabPFN (classification, labels binaires) ──────────────────────────────────
 
+def _resolve_device(device: str | None) -> str:
+    """Renvoie le device demandé, sinon 'cuda' si dispo, sinon 'cpu'."""
+    if device is not None:
+        return device
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
 def train_tabpfn(
     X_train: pd.DataFrame,
     y_train: pd.Series,
-    device: str = "cuda",
+    device: str | None = None,
 ) -> "TabPFNClassifier":
     if not HAS_TABPFN:
         raise ImportError("tabpfn non installé : pip install tabpfn")
-    clf = TabPFNClassifier(device=device)
+    clf = TabPFNClassifier(device=_resolve_device(device))
     clf.fit(X_train.values, y_train.values)
     return clf
 
@@ -102,6 +113,46 @@ def predict_proba_tabpfn(model, X: pd.DataFrame) -> np.ndarray:
         batch = X.iloc[i : i + 5000].values
         preds.append(model.predict_proba(batch)[:, 1])
     return np.concatenate(preds)
+
+
+# ── Sous-échantillonnage des négatifs (pour TabPFN, limite ~10k lignes) ───────
+
+def subsample_negatives_kmeans(
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_clusters: int = 3000,
+    random_state: int = 42,
+) -> np.ndarray:
+    """
+    Garde tous les positifs + un représentant par cluster K-Means des négatifs.
+
+    Les features sont **standardisées avant le clustering** : sans ça, K-Means est
+    dominé par les colonnes de grande magnitude (ex. total_parking_minutes ~1e4)
+    et ignore les ratios d'aérosols (~1e-10), ce qui ruine la diversité visée.
+
+    Retourne les indices (triés) à conserver, dans le référentiel de X.
+    """
+    from sklearn.cluster import MiniBatchKMeans
+    from sklearn.preprocessing import StandardScaler
+
+    y_arr   = np.asarray(y)
+    pos_idx = np.where(y_arr == 1)[0]
+    neg_idx = np.where(y_arr == 0)[0]
+
+    if len(neg_idx) <= n_clusters:
+        return np.sort(np.concatenate([pos_idx, neg_idx]))
+
+    X_neg  = StandardScaler().fit_transform(X.iloc[neg_idx].values)
+    kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=random_state, n_init=3)
+    labels = kmeans.fit_predict(X_neg)
+    dists  = np.linalg.norm(X_neg - kmeans.cluster_centers_[labels], axis=1)
+
+    selected = [
+        neg_idx[labels == c][np.argmin(dists[labels == c])]
+        for c in range(n_clusters)
+        if (labels == c).any()
+    ]
+    return np.sort(np.concatenate([pos_idx, np.array(selected)]))
 
 
 # ── Validation croisée GroupKFold (hold-out par avion) ────────────────────────

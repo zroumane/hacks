@@ -94,14 +94,83 @@ def add_physical_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["wet"])
 
 
-def build_binary_labels(merged: pd.DataFrame, buffer_months: int = 12) -> pd.Series:
+def build_binary_labels(
+    merged: pd.DataFrame,
+    buffer_months: int = 12,
+    grey_months: int = 6,
+) -> pd.Series:
     """
-    Label binaire : 1 si la corrosion est détectée dans les `buffer_months` mois suivants.
+    Label de corrosion avec exclusion de la zone grise (censure par intervalle).
+
+      - 1   si months_until <= buffer_months          (corrosion détectée / imminente)
+      - 0   si months_until >  buffer_months + grey    (avion jeune, sain fiable)
+      - NaN dans ]buffer, buffer+grey]                 (zone grise → à exclure du train)
 
     Le buffer de 12 mois est un compromis entre la zone grise réelle (jusqu'à 36 mois
-    d'incertitude liée aux C-checks) et la précision du signal pour le modèle.
+    d'incertitude liée aux C-checks) et la précision du signal. La bande grise évite
+    la frontière nette qui injecte du bruit juste avant la détection (cf. Analyse.md).
+    Mettre grey_months=0 pour retrouver l'ancien comportement binaire strict.
     """
-    return (merged["months_until"] <= buffer_months).astype(int)
+    mu = merged["months_until"]
+    y = pd.Series(np.nan, index=merged.index, dtype="float64")
+    y[mu <= buffer_months] = 1.0
+    y[mu > buffer_months + grey_months] = 0.0
+    return y
+
+
+def build_training_frame(
+    corr: pd.DataFrame,
+    env_train: pd.DataFrame,
+    buffer_months: int = 12,
+    grey_months: int = 6,
+    physics: bool = False,
+):
+    """
+    Construit le jeu d'entraînement complet à partir des deux CSV bruts.
+
+    Étapes (identiques pour step1/2/3, factorisées ici pour éviter la dérive) :
+      1. merge corrosions × environnement, filtre les mois <= date de détection
+      2. calcule months_until + features (sel marin, âge, physiques si `physics`)
+      3. construit les labels avec exclusion de la zone grise
+      4. retire les lignes de la zone grise (label NaN)
+
+    Retourne (merged, X, y, groups). `cum_wet` est calculé sur la timeline complète
+    AVANT le retrait de la zone grise, donc le cumul reste correct.
+    """
+    corr = corr.copy()
+    corr["observation_date"] = pd.to_datetime(corr["observation_date"])
+
+    merged = env_train.merge(
+        corr[["aircraft_id", "observation_date",
+              "aircraft_delivery_year", "aircraft_delivery_month"]],
+        on="aircraft_id",
+        how="inner",
+    )
+    merged["month_dt"] = pd.to_datetime(merged["year_month"])
+    merged = merged[merged["month_dt"] <= merged["observation_date"]].copy()
+    merged["months_until"] = (
+        (merged["observation_date"].dt.year  - merged["month_dt"].dt.year)  * 12
+        + (merged["observation_date"].dt.month - merged["month_dt"].dt.month)
+    )
+
+    merged = add_sea_salt_total(merged)
+    merged = add_age_feature(
+        merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"]
+    )
+    merged = merged.sort_values(["aircraft_id", "month_dt"]).reset_index(drop=True)
+    if physics:
+        merged = add_physical_features(merged)   # cum_wet : sur la timeline complète
+
+    y = build_binary_labels(merged, buffer_months=buffer_months, grey_months=grey_months)
+
+    keep = y.notna()
+    merged = merged[keep].reset_index(drop=True)
+    y = y[keep].astype(int).reset_index(drop=True)
+
+    cols = FEATURE_COLS_PHYSICS if physics else FEATURE_COLS_BASE
+    X = merged[cols].fillna(0)
+    groups = merged["aircraft_id"]
+    return merged, X, y, groups
 
 
 def check_inspection_bias(corr: pd.DataFrame) -> pd.DataFrame:

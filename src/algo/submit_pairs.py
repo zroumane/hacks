@@ -29,7 +29,10 @@ from utils.io import load_input, save_output
 # ── 1. Chargement ──────────────────────────────────────────────────────────────
 print("Chargement des données...")
 env_test = load_input("environment_test.csv")   # 14 303 lignes
-sample   = load_input("sample_submission.csv")  # 164 lignes (82 avions × 2 dates)
+if not Path("input/sample_submission.csv").exists():
+    print("ERREUR : placer sample_submission.csv dans input/")
+    sys.exit(1)
+sample = load_input("sample_submission.csv")
 
 # ── 2. Vérification de la structure des paires ─────────────────────────────────
 pairs = sample["id"].str.rsplit("_", n=1, expand=True)

@@ -20,27 +20,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np
-import pandas as pd
-from sklearn.cluster import MiniBatchKMeans
-
 from utils.io import load_input
-from utils.features import (
-    FEATURE_COLS_BASE,
-    add_age_feature,
-    add_sea_salt_total,
-    build_binary_labels,
-)
+from utils.features import build_training_frame
 from utils.ml import (
     HAS_TABPFN,
     brier_score,
     cross_validate_group,
     predict_proba_tabpfn,
     save_model,
+    subsample_negatives_kmeans,
     train_tabpfn,
 )
 
 BUFFER_MONTHS = 12
+GREY_MONTHS   = 6      # zone grise exclue juste avant la détection (censure)
 MAX_TRAIN     = 9000   # limite mémoire TabPFN (~10 000 lignes)
 N_CLUSTERS    = 3000   # clusters K-Means sur les négatifs pour sous-échantillonner
 
@@ -54,53 +47,17 @@ print("Chargement des données...")
 corr      = load_input("corrosions_training.csv")
 env_train = load_input("environment_training.csv")
 
-corr["observation_date"] = pd.to_datetime(corr["observation_date"])
-merged = env_train.merge(
-    corr[["aircraft_id", "observation_date", "aircraft_delivery_year", "aircraft_delivery_month"]],
-    on="aircraft_id",
-    how="inner",
+_, X_full, y_full, groups_full = build_training_frame(
+    corr, env_train, buffer_months=BUFFER_MONTHS, grey_months=GREY_MONTHS,
 )
-merged["month_dt"] = pd.to_datetime(merged["year_month"])
-merged = merged[merged["month_dt"] <= merged["observation_date"]].copy()
-merged["months_until"] = (
-    (merged["observation_date"].dt.year  - merged["month_dt"].dt.year)  * 12
-    + (merged["observation_date"].dt.month - merged["month_dt"].dt.month)
-)
-merged = add_sea_salt_total(merged)
-merged = add_age_feature(merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"])
-merged = merged.sort_values(["aircraft_id", "month_dt"]).reset_index(drop=True)
 
-y_full      = build_binary_labels(merged, buffer_months=BUFFER_MONTHS)
-X_full      = merged[FEATURE_COLS_BASE].fillna(0)
-groups_full = merged["aircraft_id"]
-
-print(f"  {len(merged)} lignes avant sous-échantillonnage | positifs : {int(y_full.sum())}")
+print(f"  {len(X_full)} lignes avant sous-échantillonnage | positifs : {int(y_full.sum())}")
 
 
-# ── 2. Sous-échantillonnage K-Means des négatifs ──────────────────────────────
+# ── 2. Sous-échantillonnage K-Means des négatifs (features standardisées) ──────
 print(f"\nSous-échantillonnage K-Means ({N_CLUSTERS} clusters sur les négatifs)...")
 
-pos_idx = np.where(y_full == 1)[0]
-neg_idx = np.where(y_full == 0)[0]
-
-X_neg = X_full.iloc[neg_idx].values
-kmeans = MiniBatchKMeans(n_clusters=N_CLUSTERS, random_state=42, n_init=3)
-kmeans.fit(X_neg)
-
-centers = kmeans.cluster_centers_
-dists   = np.linalg.norm(X_neg - centers[kmeans.labels_], axis=1)
-
-# Par cluster, on garde le point le plus proche du centre
-cluster_labels  = kmeans.labels_
-selected_neg    = []
-for c in range(N_CLUSTERS):
-    mask = cluster_labels == c
-    if mask.any():
-        best = neg_idx[mask][np.argmin(dists[mask])]
-        selected_neg.append(best)
-
-selected_idx = np.concatenate([pos_idx, np.array(selected_neg)])
-selected_idx = np.sort(selected_idx)
+selected_idx = subsample_negatives_kmeans(X_full, y_full, n_clusters=N_CLUSTERS)
 
 X_sub      = X_full.iloc[selected_idx].reset_index(drop=True)
 y_sub      = y_full.iloc[selected_idx].reset_index(drop=True)

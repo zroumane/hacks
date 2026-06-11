@@ -19,18 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np
-import pandas as pd
-from sklearn.cluster import MiniBatchKMeans
-
 from utils.io import load_input
-from utils.features import (
-    FEATURE_COLS_PHYSICS,
-    add_age_feature,
-    add_physical_features,
-    add_sea_salt_total,
-    build_binary_labels,
-)
+from utils.features import FEATURE_COLS_PHYSICS, build_training_frame
 from utils.ml import (
     HAS_CATBOOST,
     HAS_TABPFN,
@@ -38,11 +28,13 @@ from utils.ml import (
     cross_validate_group,
     predict_proba_tabpfn,
     save_model,
+    subsample_negatives_kmeans,
     train_catboost,
     train_tabpfn,
 )
 
 BUFFER_MONTHS = 12
+GREY_MONTHS   = 6      # zone grise exclue juste avant la détection (censure)
 MAX_TABPFN    = 9000
 N_CLUSTERS    = 3000
 
@@ -52,28 +44,9 @@ print("Chargement des données...")
 corr      = load_input("corrosions_training.csv")
 env_train = load_input("environment_training.csv")
 
-corr["observation_date"] = pd.to_datetime(corr["observation_date"])
-merged = env_train.merge(
-    corr[["aircraft_id", "observation_date", "aircraft_delivery_year", "aircraft_delivery_month"]],
-    on="aircraft_id",
-    how="inner",
+merged, X, y, groups = build_training_frame(
+    corr, env_train, buffer_months=BUFFER_MONTHS, grey_months=GREY_MONTHS, physics=True,
 )
-merged["month_dt"] = pd.to_datetime(merged["year_month"])
-merged = merged[merged["month_dt"] <= merged["observation_date"]].copy()
-merged["months_until"] = (
-    (merged["observation_date"].dt.year  - merged["month_dt"].dt.year)  * 12
-    + (merged["observation_date"].dt.month - merged["month_dt"].dt.month)
-)
-
-# Features physiques — ordre important : sea_salt_total avant physical_features
-merged = add_sea_salt_total(merged)
-merged = add_age_feature(merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"])
-merged = merged.sort_values(["aircraft_id", "month_dt"]).reset_index(drop=True)
-merged = add_physical_features(merged)   # cum_wet nécessite le tri par avion+date
-
-y      = build_binary_labels(merged, buffer_months=BUFFER_MONTHS)
-X      = merged[FEATURE_COLS_PHYSICS].fillna(0)
-groups = merged["aircraft_id"]
 
 print(f"  {len(merged)} lignes | {len(FEATURE_COLS_PHYSICS)} features | positifs : {int(y.sum())}")
 
@@ -97,16 +70,8 @@ else:
 
 # ── 3. TabPFN + features physiques (si disponible) ────────────────────────────
 if HAS_TABPFN:
-    print("\nSous-échantillonnage K-Means pour TabPFN...")
-    pos_idx = np.where(y == 1)[0]
-    neg_idx = np.where(y == 0)[0]
-    X_neg   = X.iloc[neg_idx].values
-    kmeans  = MiniBatchKMeans(n_clusters=N_CLUSTERS, random_state=42, n_init=3)
-    kmeans.fit(X_neg)
-    dists  = np.linalg.norm(X_neg - kmeans.cluster_centers_[kmeans.labels_], axis=1)
-    sel_neg = [neg_idx[kmeans.labels_ == c][np.argmin(dists[kmeans.labels_ == c])]
-               for c in range(N_CLUSTERS) if (kmeans.labels_ == c).any()]
-    sel_idx = np.sort(np.concatenate([pos_idx, np.array(sel_neg)]))
+    print("\nSous-échantillonnage K-Means pour TabPFN (features standardisées)...")
+    sel_idx = subsample_negatives_kmeans(X, y, n_clusters=N_CLUSTERS)
 
     X_sub = X.iloc[sel_idx].reset_index(drop=True)
     y_sub = y.iloc[sel_idx].reset_index(drop=True)
