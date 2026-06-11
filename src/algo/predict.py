@@ -22,30 +22,41 @@ import pandas as pd
 from utils.io import load_input, save_output
 from utils.ml import load_model
 
-# Doit correspondre exactement aux features utilisées à l'entraînement
+# Doit correspondre exactement aux features de train.py
 ENV_FEATURES = [
     "total_parking_minutes",
     "metar_temperature_c", "metar_relative_humidity", "metar_dew_point_c",
     "metar_wind_speed_kn", "metar_visibility_mi", "metar_hour_precipitation",
-    "sea_salt_aerosol_003_05_mixing_ratio",
-    "sea_salt_aerosol_05_5_mixing_ratio",
+    "sea_salt_aerosol_003_05_mixing_ratio", "sea_salt_aerosol_05_5_mixing_ratio",
     "sea_salt_aerosol_5_20_mixing_ratio",
-    "dust_aerosol_003_055_mixing_ratio",
-    "dust_aerosol_055_09_mixing_ratio",
+    "dust_aerosol_003_055_mixing_ratio", "dust_aerosol_055_09_mixing_ratio",
     "dust_aerosol_09_20_mixing_ratio",
+    "hydrophilic_organic_matter_aerosol_mixing_ratio",
+    "hydrophobic_organic_matter_aerosol_mixing_ratio",
+    "hydrophilic_black_carbon_aerosol_mixing_ratio",
+    "hydrophobic_black_carbon_aerosol_mixing_ratio",
     "sulphate_aerosol_mixing_ratio", "sulphur_dioxide_mass_mixing_ratio",
     "hno3", "ozone_mass_mixing_ratio",
     "nitrogen_monoxide_mass_mixing_ratio", "nitrogen_dioxide_mass_mixing_ratio",
+    "formaldehyde", "h2o2", "oh", "organic_nitrates",
+    "ethane", "c3h8", "isoprene", "carbon_monoxide_mass_mixing_ratio",
     "specific_humidity", "temperature",
 ]
-FEATURE_COLS = ENV_FEATURES + ["aircraft_age_months"]
+CUMUL_FEATURES = [
+    f"{col}_{window}m"
+    for col in [
+        "sea_salt_aerosol_05_5_mixing_ratio",
+        "metar_relative_humidity",
+        "total_parking_minutes",
+        "sulphur_dioxide_mass_mixing_ratio",
+        "hno3",
+    ]
+    for window in [3, 6, 12]
+]
+FEATURE_COLS = ENV_FEATURES + CUMUL_FEATURES + ["aircraft_age_months"]
 
 
-def add_age_feature(
-    df: pd.DataFrame,
-    delivery_year: pd.Series,
-    delivery_month: pd.Series,
-) -> pd.DataFrame:
+def add_age_feature(df, delivery_year, delivery_month):
     df = df.copy()
     month_dt    = pd.to_datetime(df["year_month"])
     delivery_dt = pd.to_datetime(dict(year=delivery_year, month=delivery_month, day=1))
@@ -53,6 +64,23 @@ def add_age_feature(
         (month_dt.dt.year  - delivery_dt.dt.year)  * 12
         + (month_dt.dt.month - delivery_dt.dt.month)
     )
+    return df
+
+
+def build_cumulative_features(df):
+    df = df.copy()
+    for col in [
+        "sea_salt_aerosol_05_5_mixing_ratio",
+        "metar_relative_humidity",
+        "total_parking_minutes",
+        "sulphur_dioxide_mass_mixing_ratio",
+        "hno3",
+    ]:
+        for window in [3, 6, 12]:
+            df[f"{col}_{window}m"] = (
+                df.groupby("aircraft_id")[col]
+                .transform(lambda x: x.rolling(window, min_periods=1).mean())
+            )
     return df
 
 
@@ -79,7 +107,9 @@ env_test = load_input("environment_test.csv")  # 14 303 lignes, 142 avions
 # Leur date de livraison n'est pas dans les données → on applique cette constante.
 env_test["delivery_year"]  = 2014
 env_test["delivery_month"] = 6
+env_test = env_test.sort_values(["aircraft_id", "year_month"]).reset_index(drop=True)
 env_test = add_age_feature(env_test, env_test["delivery_year"], env_test["delivery_month"])
+env_test = build_cumulative_features(env_test)
 
 # ── 3. Prédictions ─────────────────────────────────────────────────────────────
 print("Génération des prédictions...")
