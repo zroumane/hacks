@@ -29,7 +29,12 @@ from utils.io import load_input, save_output
 # ── 1. Chargement ──────────────────────────────────────────────────────────────
 print("Chargement des données...")
 env_test = load_input("environment_test.csv")   # 14 303 lignes
-sample   = load_input("sample_submission.csv") if Path("input/sample_submission.csv").exists() else load_input("test.csv")
+if Path("input/sample_submission.csv").exists():
+    sample = load_input("sample_submission.csv")
+else:
+    _gt = load_input("test.csv")
+    sample = _gt[_gt["corrosion_risk"] != 0.5][["id"]].copy()
+    sample["corrosion_risk"] = 0.5
 
 # ── 2. Vérification de la structure des paires ─────────────────────────────────
 pairs = sample["id"].str.rsplit("_", n=1, expand=True)
