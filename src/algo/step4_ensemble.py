@@ -53,7 +53,7 @@ def needs_physics(name: str) -> bool:
 # ── 1. Chargement des données de test ─────────────────────────────────────────
 print("Chargement des données de test...")
 env_test = load_input("environment_test.csv")
-sub      = load_input("sample_submission.csv")
+sub      = load_input("sample_submission.csv") if Path("input/sample_submission.csv").exists() else load_input("test.csv")
 
 # Estimation de la date de livraison = premier mois disponible par avion
 first_month = env_test.groupby("aircraft_id")["year_month"].min().reset_index()

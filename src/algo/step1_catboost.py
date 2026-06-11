@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import pandas as pd
 
-from utils.io import load_input, save_model
+from utils.io import load_input
+from utils.ml import save_model
 from utils.features import (
     FEATURE_COLS_BASE,
     add_age_feature,

@@ -100,7 +100,7 @@ print(f"  Modèle entraîné sur {len(X_train)} lignes.")
 print("\n=== Étape 2 : scoring des paires de test ===")
 
 env_test = load_input("environment_test.csv")
-sample   = load_input("sample_submission.csv")
+sample   = load_input("sample_submission.csv") if Path("input/sample_submission.csv").exists() else load_input("test.csv")
 
 # Estimation de l'âge pour les avions de test
 first_month = env_test.groupby("aircraft_id")["year_month"].min().reset_index()
