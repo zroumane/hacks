@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+import pandas as pd
+
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
@@ -35,7 +37,8 @@ def _parse_file(path: Path):
     if ext in DOCLING_FORMATS:
         result = _get_converter().convert(str(path))
         return result.document.export_to_markdown()
-    # TODO: implémenter .csv → retourner un pandas DataFrame
+    if ext == ".csv":
+        return pd.read_csv(path)
     raise NotImplementedError(f"Format non supporté : {ext}")
 
 
@@ -50,7 +53,9 @@ def _serialize_file(data, path: Path) -> None:
     if ext == ".md":
         path.write_text(str(data), encoding="utf-8")
         return
-    # TODO: implémenter .csv → attendre un pandas DataFrame, appeler .to_csv()
+    if ext == ".csv":
+        data.to_csv(path, index=False)
+        return
     # TODO: implémenter .pdf → générer un PDF à partir de data
     raise NotImplementedError(f"Format non supporté : {ext}")
 
