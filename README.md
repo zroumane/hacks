@@ -72,15 +72,34 @@ content = load_input("data.txt")  # -> str | ...
 output_path = save_output(data, "result.txt")  # -> Path
 ```
 
-Formats supportés : `.txt`. Les autres (`.csv`, `.json`, `.pdf`) sont en TODO dans `utils/io.py`.
+Formats supportés : `.txt`, `.csv`, `.json`. Les autres (`.pdf` via Docling, `.docx`, `.pptx`...) sont aussi supportés en lecture.
 
-## Usage
+## Pipeline de modélisation
+
+### 1. Entraînement
+
+Construit la cible, valide par cross-validation temporelle, entraîne XGBoost et sauvegarde le modèle.
+
+```bash
+uv run src/algo/train.py
+# → output/models/xgb_corrosion.pkl
+```
+
+### 2. Prédiction
+
+Génère le fichier de soumission Kaggle à partir d'un modèle `.pkl`.
+
+```bash
+uv run src/algo/predict.py output/models/xgb_corrosion.pkl
+# → output/<timestamp>_submission.csv
+```
+
+## Usage général
 
 ### Script Python classique
 
 ```bash
-# Le script s'exécute directement via l'interpréteur Python
-uv run src/<script.py>
+uv run src/algo/<script.py>
 ```
 
 ### App Streamlit
@@ -88,5 +107,5 @@ uv run src/<script.py>
 Les apps Streamlit nécessitent le CLI.
 
 ```bash
-uv run streamlit run src/<app.py>
+uv run streamlit run src/streamlit/<app.py>
 ```
