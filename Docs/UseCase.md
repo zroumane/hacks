@@ -76,12 +76,11 @@ On prédit un `corrosion_risk` ∈ [0, 1] pour chaque combinaison avion × mois.
 
 ### Construction de la cible
 
-La variable `corrosion_risk` n'est pas directement dans les données — elle doit être **construite** à partir de `corrosions_training.csv`. L'approche naturelle :
+La variable cible n'est pas dans les données — elle doit être **construite** à partir de `corrosions_training.csv`. Attention : la date connue est celle de la **détection**, pas de l'**apparition** → **censure par intervalle**.
 
-1. Pour chaque avion, calculer le nombre de mois restants avant la date d'observation de corrosion
-2. Transformer ce délai en score de risque (plus on approche de la date, plus le risque est élevé)
+Approche retenue (détail dans [Analyse.md](Analyse.md) § *Formalisme du Problème*) : on génère des couples `(date, Y_i)` avec `Y_i ∈ {0,1}` — `1` à la date de détection, `0` sur les dates bien antérieures, zone grise exclue. Le modèle prédit `P(Y_i = 1)`, scoré au Brier Score.
 
-Exemple de formule : `corrosion_risk = 1 / (1 + months_until_corrosion)`
+> ⚠️ Ne pas utiliser un score continu type `1/(1+months)` : il ne correspond pas à la cible binaire réellement scorée.
 
 ### Facteurs clés attendus
 

@@ -9,6 +9,44 @@ Développer un modèle de Machine Learning pour **estimer la probabilité de cor
 
 **Type de problème** : Classification probabiliste sur séries temporelles (données mensuelles par avion). Le modèle produit `P_i ∈ [0, 1]` = probabilité de corrosion détectée au C-CHECK.
 
+## Formalisme du Problème (compréhension vérifiée)
+
+Cette section fixe **précisément** ce qu'on a en entrée et ce qu'on doit prédire — c'est le point le plus subtil du sujet.
+
+### Ce qu'on a vraiment
+
+- **En entraînement, on n'a pas de `Y_i` explicites.** `corrosions_training.csv` donne seulement, pour chaque avion, **une date à laquelle une corrosion a été *détectée***. Vérifié sur les données : les **758 avions** de `environment_training` ont **tous** corrodé une fois → il n'y a **aucun avion sain** ni aucun C-CHECK négatif documenté dans le train.
+- **En soumission**, on reçoit pour chaque avion une **date d'inspection**, et on doit prédire la **probabilité `P_i = P(Y_i = 1)`** qu'à cette date une corrosion soit observée (`Y_i ∈ {0,1}`). Les avions du test (142) sont **disjoints** du train → on ne connaît jamais leur date de corrosion.
+
+### Le piège : censure par intervalle
+
+La date connue est celle de la **détection** (lors d'un C-CHECK), **pas** celle de l'**apparition** de la corrosion. La corrosion est apparue *quelque part* dans `]livraison , date_détection]`, sans qu'on sache quand :
+
+```
+livraison        apparition réelle        détectée au C-CHECK
+(avion sain)     (inconnue ❓)            (connue ✅)
+   |──────────────────?──────────────────────|
+                                        date_observation
+```
+
+C'est une **censure par intervalle** (problème d'analyse de survie). Conséquence directe sur la construction des labels :
+
+| Date d'inspection hypothétique | Label `Y_i` |
+|---|---|
+| Avion jeune, loin avant la détection | `0` fiable (quasi sûrement sain) |
+| Quelques mois avant la détection | **incertain** (peut-être déjà corrodé, pas encore inspecté) → zone grise |
+| À la date de détection | `1` certain (seul label vraiment sûr) |
+
+### Comment construire la cible
+
+On transforme « 1 avion = 1 date » en « 1 avion = plusieurs `(date, Y_i)` » :
+- `Y_i = 1` à la date de détection (**unique ancrage positif**) ;
+- `Y_i = 0` aux dates suffisamment **antérieures** (avion jeune) ;
+- on **exclut la zone grise** juste avant la détection (buffer de quelques mois) pour ne pas injecter de bruit ;
+- on ne labellise **jamais** `Y_i = 1` *après* la détection (réparation → l'avion redevient sain).
+
+Le modèle apprend ainsi une probabilité qui **croît avec l'âge et l'exposition cumulée** — exactement la courbe sigmoïde du slide 2 (~2 % à la livraison → ~98 % à 36 mois). Cadre plus rigoureux possible : modèle de survie à censure par intervalle (cf. [IdeesModeles.md](IdeesModeles.md)).
+
 ## Structure des Données
 
 | Dataset | Lignes | Description |
@@ -41,8 +79,9 @@ Développer un modèle de Machine Learning pour **estimer la probabilité de cor
 
 **Composés chimiques** : `ethane`, `c3h8`, `isoprene`, `carbon_monoxide_mass_mixing_ratio`, `ozone_mass_mixing_ratio`, `h2o2`, `formaldehyde`, `hno3`, `nitrogen_monoxide/dioxide_mass_mixing_ratio`, `oh`, `organic_nitrates`, `sulphur_dioxide_mass_mixing_ratio`, `specific_humidity`, `temperature`
 
-### Format de soumission (`sample_submission-2.csv`)
-Colonnes : `id` (`aircraft_id_year_month`), `aircraft_id`, `year_month`, `corrosion_risk`
+### Format de soumission (`sample_submission.csv`)
+**164 lignes × 2 colonnes** (vérifié) : `id` (= `<aircraft_id>_<year_month>`) et `corrosion_risk ∈ [0,1]`.
+On ne prédit **pas tous les mois** : seulement **164 couples (avion × date d'inspection)** sur les 142 avions du test (≈ 1,15 date par avion = les C-CHECKs à scorer).
 
 ## Facteurs de Corrosion
 
@@ -62,16 +101,9 @@ Colonnes : `id` (`aircraft_id_year_month`), `aircraft_id`, `year_month`, `corros
 
 ### 1. Construction de la Variable Cible
 
-La target est **binaire** : à chaque date de C-CHECK, `Y_i = 1` si corrosion détectée, `Y_i = 0` sinon.
+> Détail complet (censure par intervalle, zone grise, ancrage positif) dans la section **Formalisme du Problème** ci-dessus.
 
-```python
-# Pour chaque C-CHECK d'un avion dans corrosions_training.csv :
-Y_i = 1  # corrosion observée à cette date d'inspection
-# Pour les C-CHECKs sans observation de corrosion :
-Y_i = 0
-```
-
-La courbe de risque réelle suit une **croissance sigmoïde/exponentielle** dans le temps (cf. slide : ~2% au mois 0, 15% au mois 8, 75% au mois 24, ~98% au mois 36). Le modèle prédit la probabilité `P_i` d'atteindre `Y_i = 1` à la prochaine inspection.
+En bref : on génère des couples `(date, Y_i)` par avion — `Y_i = 1` à la date de détection, `Y_i = 0` sur les dates bien antérieures, zone grise exclue (buffer). Le modèle prédit `P_i = P(Y_i = 1)`, probabilité croissante avec l'âge et l'exposition (courbe sigmoïde du slide 2 : ~2 % à la livraison → ~98 % à 36 mois).
 
 ### 2. Feature Engineering
 
