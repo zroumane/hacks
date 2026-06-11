@@ -4,5 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
 dependencies = [
+    "docling>=2.101.0",
+    "ibm-watsonx-ai>=1.5.13",
+    "python-dotenv>=1.2.2",
     "streamlit>=1.58.0",
 ]

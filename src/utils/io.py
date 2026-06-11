@@ -1,18 +1,41 @@
+import json
 from pathlib import Path
 from datetime import datetime
+
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_DIR = ROOT / "input"
 OUTPUT_DIR = ROOT / "output"
+
+DOCLING_FORMATS = {".pdf", ".docx", ".pptx", ".html", ".htm", ".md", ".asciidoc"}
+
+_converter = None
+
+
+def _get_converter() -> DocumentConverter:
+    global _converter
+    if _converter is None:
+        pdf_options = PdfPipelineOptions()
+        pdf_options.do_ocr = False
+        pdf_options.do_table_structure = False
+        _converter = DocumentConverter(
+            format_options={"pdf": PdfFormatOption(pipeline_options=pdf_options)}
+        )
+    return _converter
 
 
 def _parse_file(path: Path):
     ext = path.suffix.lower()
     if ext == ".txt":
         return path.read_text(encoding="utf-8")
-    # TODO: implémenter .csv  → retourner un pandas DataFrame
-    # TODO: implémenter .json → retourner un dict
-    # TODO: implémenter .pdf  → retourner le texte extrait
+    if ext == ".json":
+        return json.loads(path.read_text(encoding="utf-8"))
+    if ext in DOCLING_FORMATS:
+        result = _get_converter().convert(str(path))
+        return result.document.export_to_markdown()
+    # TODO: implémenter .csv → retourner un pandas DataFrame
     raise NotImplementedError(f"Format non supporté : {ext}")
 
 
@@ -21,9 +44,14 @@ def _serialize_file(data, path: Path) -> None:
     if ext == ".txt":
         path.write_text(str(data), encoding="utf-8")
         return
-    # TODO: implémenter .csv  → attendre un pandas DataFrame, appeler .to_csv()
-    # TODO: implémenter .json → attendre un dict, appeler json.dump()
-    # TODO: implémenter .pdf  → générer un PDF à partir de data
+    if ext == ".json":
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    if ext == ".md":
+        path.write_text(str(data), encoding="utf-8")
+        return
+    # TODO: implémenter .csv → attendre un pandas DataFrame, appeler .to_csv()
+    # TODO: implémenter .pdf → générer un PDF à partir de data
     raise NotImplementedError(f"Format non supporté : {ext}")
 
 
