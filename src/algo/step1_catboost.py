@@ -15,16 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np
-import pandas as pd
-
 from utils.io import load_input
-from utils.ml import save_model
 from utils.features import (
-    FEATURE_COLS_BASE,
-    add_age_feature,
-    add_sea_salt_total,
-    build_binary_labels,
+    build_training_frame,
     check_inspection_bias,
 )
 from utils.ml import (
@@ -36,6 +29,7 @@ from utils.ml import (
 )
 
 BUFFER_MONTHS = 12   # fenêtre de label positif (ajuster si histogramme montre biais)
+GREY_MONTHS   = 6    # zone grise exclue juste avant la détection (censure)
 
 if not HAS_CATBOOST:
     print("ERREUR : catboost non installé → pip install catboost")
@@ -51,32 +45,14 @@ env_train = load_input("environment_training.csv")
 check_inspection_bias(corr)
 
 # ── 3. Construction des labels ────────────────────────────────────────────────
-print("\nConstruction des labels binaires...")
-corr["observation_date"] = pd.to_datetime(corr["observation_date"])
-
-merged = env_train.merge(
-    corr[["aircraft_id", "observation_date", "aircraft_delivery_year", "aircraft_delivery_month"]],
-    on="aircraft_id",
-    how="inner",
+print("\nConstruction des labels binaires (zone grise exclue)...")
+merged, X, y, groups = build_training_frame(
+    corr, env_train, buffer_months=BUFFER_MONTHS, grey_months=GREY_MONTHS,
 )
-merged["month_dt"] = pd.to_datetime(merged["year_month"])
-merged = merged[merged["month_dt"] <= merged["observation_date"]].copy()
-
-merged["months_until"] = (
-    (merged["observation_date"].dt.year  - merged["month_dt"].dt.year)  * 12
-    + (merged["observation_date"].dt.month - merged["month_dt"].dt.month)
-)
-
-merged = add_sea_salt_total(merged)
-merged = add_age_feature(merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"])
-merged = merged.sort_values(["aircraft_id", "month_dt"]).reset_index(drop=True)
-
-y      = build_binary_labels(merged, buffer_months=BUFFER_MONTHS)
-X      = merged[FEATURE_COLS_BASE].fillna(0)
-groups = merged["aircraft_id"]
 
 pos_rate = y.mean()
-print(f"  {len(merged)} lignes | positifs : {int(y.sum())} ({pos_rate:.1%}) | buffer : {BUFFER_MONTHS} mois")
+print(f"  {len(merged)} lignes | positifs : {int(y.sum())} ({pos_rate:.1%}) | "
+      f"buffer : {BUFFER_MONTHS} mois | zone grise : {GREY_MONTHS} mois")
 
 # ── 4. Validation croisée GroupKFold ──────────────────────────────────────────
 print("\nValidation GroupKFold (5 folds, hold-out par avion)...")
@@ -91,7 +67,8 @@ print("\nEntraînement final CatBoost...")
 model = train_catboost(X, y)
 
 train_preds = model.predict_proba(X)[:, 1]
-print(f"  Brier Score (train) : {brier_score(y.values, train_preds):.4f}")
+print(f"  Brier Score (train, optimiste — voir la CV ci-dessus) : "
+      f"{brier_score(y.values, train_preds):.4f}")
 
 save_model(model, "catboost_step1")
 print("\nÉtape 1 terminée. Lancer step2_tabpfn.py ou step4_ensemble.py pour la soumission.")

@@ -24,39 +24,15 @@ import pandas as pd
 from xgboost import XGBRegressor
 
 from utils.io import load_input, save_output
+from utils.features import FEATURE_COLS_BASE, add_age_feature
 
 # ── Paramètres ─────────────────────────────────────────────────────────────────
 FLIP_THRESHOLD = 0.05   # marge minimale pour flipper une paire (modèle > baseline)
 CLIP_LOW       = 0.05
 CLIP_HIGH      = 0.95
 
-ENV_FEATURES = [
-    "total_parking_minutes",
-    "metar_temperature_c", "metar_relative_humidity", "metar_dew_point_c",
-    "metar_wind_speed_kn", "metar_visibility_mi", "metar_hour_precipitation",
-    "sea_salt_aerosol_003_05_mixing_ratio",
-    "sea_salt_aerosol_05_5_mixing_ratio",
-    "sea_salt_aerosol_5_20_mixing_ratio",
-    "dust_aerosol_003_055_mixing_ratio",
-    "dust_aerosol_055_09_mixing_ratio",
-    "dust_aerosol_09_20_mixing_ratio",
-    "sulphate_aerosol_mixing_ratio", "sulphur_dioxide_mass_mixing_ratio",
-    "hno3", "ozone_mass_mixing_ratio",
-    "nitrogen_monoxide_mass_mixing_ratio", "nitrogen_dioxide_mass_mixing_ratio",
-    "specific_humidity", "temperature",
-    "aircraft_age_months",
-]
-
-
-def add_age(df: pd.DataFrame, delivery_year: pd.Series, delivery_month: pd.Series) -> pd.DataFrame:
-    df = df.copy()
-    month_dt    = pd.to_datetime(df["year_month"])
-    delivery_dt = pd.to_datetime(dict(year=delivery_year, month=delivery_month, day=1))
-    df["aircraft_age_months"] = (
-        (month_dt.dt.year  - delivery_dt.dt.year)  * 12
-        + (month_dt.dt.month - delivery_dt.dt.month)
-    )
-    return df
+# Mêmes features que le pipeline principal (source unique : utils.features)
+ENV_FEATURES = FEATURE_COLS_BASE
 
 
 # ── 1. Entraînement du modèle sur les données training ────────────────────────
@@ -82,7 +58,7 @@ merged["months_until"] = (
 # Score continu : 1.0 au mois de détection, décroît vers le passé
 merged["corrosion_risk"] = 1 / (1 + merged["months_until"])
 
-merged = add_age(merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"])
+merged = add_age_feature(merged, merged["aircraft_delivery_year"], merged["aircraft_delivery_month"])
 merged = merged.sort_values(["aircraft_id", "month_dt"]).reset_index(drop=True)
 
 X_train = merged[ENV_FEATURES].fillna(0)
@@ -100,12 +76,10 @@ print(f"  Modèle entraîné sur {len(X_train)} lignes.")
 print("\n=== Étape 2 : scoring des paires de test ===")
 
 env_test = load_input("environment_test.csv")
-if Path("input/sample_submission.csv").exists():
-    sample = load_input("sample_submission.csv")
-else:
-    _gt = load_input("test.csv")
-    sample = _gt[_gt["corrosion_risk"] != 0.5][["id"]].copy()
-    sample["corrosion_risk"] = 0.5
+if not Path("input/sample_submission.csv").exists():
+    print("ERREUR : placer sample_submission.csv dans input/")
+    sys.exit(1)
+sample = load_input("sample_submission.csv")
 
 # Estimation de l'âge pour les avions de test
 first_month = env_test.groupby("aircraft_id")["year_month"].min().reset_index()
@@ -113,7 +87,7 @@ first_month.columns = ["aircraft_id", "estimated_delivery"]
 first_month["delivery_year"]  = pd.to_datetime(first_month["estimated_delivery"]).dt.year
 first_month["delivery_month"] = pd.to_datetime(first_month["estimated_delivery"]).dt.month
 env_test = env_test.merge(first_month[["aircraft_id", "delivery_year", "delivery_month"]], on="aircraft_id")
-env_test = add_age(env_test, env_test["delivery_year"], env_test["delivery_month"])
+env_test = add_age_feature(env_test, env_test["delivery_year"], env_test["delivery_month"])
 
 X_test = env_test[ENV_FEATURES].fillna(0)
 env_test["model_score"] = np.clip(model.predict(X_test), 0, 1)

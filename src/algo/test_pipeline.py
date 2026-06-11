@@ -39,7 +39,10 @@ print("Chargement...")
 corr      = load_input("corrosions_training.csv")
 env_train = load_input("environment_training.csv")
 env_test  = load_input("environment_test.csv")
-sample    = load_input("sample_submission.csv") if Path("input/sample_submission.csv").exists() else load_input("test.csv")
+if not Path("input/sample_submission.csv").exists():
+    print("ERREUR : placer sample_submission.csv dans input/")
+    sys.exit(1)
+sample    = load_input("sample_submission.csv")
 
 corr["observation_date"] = pd.to_datetime(corr["observation_date"])
 merged = env_train.merge(
